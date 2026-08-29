@@ -116,7 +116,8 @@ export async function disconnectWallet(id: WalletId): Promise<void> {
  * Switch from the currently active wallet to a different one.
  *
  * Disconnects `currentId` first, then connects `newId`.
- * If the connect step fails the disconnect is still committed (no rollback).
+ * If the new connection fails, attempts to restore the previous wallet
+ * before propagating the original connection error.
  *
  * @throws {WalletAdapterError} propagated from `connectWallet`.
  */
@@ -124,10 +125,23 @@ export async function switchWallet(
   currentId: WalletId | null,
   newId: WalletId,
 ): Promise<WalletSession> {
-  if (currentId && currentId !== newId) {
-    await disconnectWallet(currentId);
+  if (!currentId || currentId === newId) {
+    return connectWallet(newId);
   }
-  return connectWallet(newId);
+
+  await disconnectWallet(currentId);
+
+  try {
+    return await connectWallet(newId);
+  } catch (error) {
+    try {
+      await connectWallet(currentId);
+    } catch {
+      // Best-effort rollback only. Preserve the original switch error.
+    }
+
+    throw error;
+  }
 }
 
 /**

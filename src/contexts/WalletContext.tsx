@@ -291,13 +291,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         notify.success("Wallet Switched", `Now connected to ${newWalletId}.`);
       } catch (e) {
         const message = e instanceof Error ? e.message : "Failed to switch wallet.";
+
         setState((s) => ({
           ...s,
           isConnecting: false,
-          address: null,
           error: message,
-          walletType: null,
         }));
+
         notify.error("Switch Failed", message);
       }
     },
