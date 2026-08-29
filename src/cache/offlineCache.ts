@@ -5,6 +5,11 @@ interface CachePayload<T> {
   timestamp: number;
 }
 
+type CacheReadOptions = {
+  ttlMs?: number | null;
+  removeExpired?: boolean;
+};
+
 const STORAGE_KEYS = {
   BALANCES: (wallet: string) => `axionvera:cache:balances:${wallet}`,
   TRANSACTIONS: (wallet: string) => `axionvera:cache:transactions:${wallet}`,
@@ -12,18 +17,20 @@ const STORAGE_KEYS = {
   SYNC_QUEUE: "axionvera:cache:syncQueue",
 };
 
-const DEFAULT_TTL = 10 * 60 * 1000; // 10 minutes cache TTL
+export const OFFLINE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
 
 /**
  * Saves item to localStorage with a timestamp wrapper.
  */
 function setItem<T>(key: string, data: T): void {
   if (typeof window === "undefined") return;
+
   try {
     const payload: CachePayload<T> = {
       data,
       timestamp: Date.now(),
     };
+
     localStorage.setItem(key, JSON.stringify(payload));
   } catch (error) {
     console.error(`[OfflineCache] Failed to write cache key "${key}":`, error);
@@ -31,16 +38,40 @@ function setItem<T>(key: string, data: T): void {
 }
 
 /**
- * Retrieves item from localStorage, checking existence.
- * Returns null if missing or error occurs.
+ * Retrieves item from localStorage and enforces TTL by default.
+ * Returns null if missing, expired, malformed, or if an error occurs.
  */
-function getItem<T>(key: string): T | null {
+function getItem<T>(key: string, options: CacheReadOptions = {}): T | null {
   if (typeof window === "undefined") return null;
+
+  const ttlMs = options.ttlMs === undefined ? OFFLINE_CACHE_TTL_MS : options.ttlMs;
+  const removeExpired = options.removeExpired ?? true;
+
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
-    const payload = JSON.parse(raw) as CachePayload<T>;
-    return payload.data;
+
+    const payload = JSON.parse(raw) as Partial<CachePayload<T>>;
+
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      !("data" in payload) ||
+      typeof payload.timestamp !== "number"
+    ) {
+      localStorage.removeItem(key);
+      return null;
+    }
+
+    if (ttlMs !== null && Date.now() - payload.timestamp > ttlMs) {
+      if (removeExpired) {
+        localStorage.removeItem(key);
+      }
+
+      return null;
+    }
+
+    return payload.data as T;
   } catch (error) {
     console.error(`[OfflineCache] Failed to parse cache key "${key}":`, error);
     return null;
@@ -94,11 +125,12 @@ export function cacheSyncQueue<T>(queue: T[]): void {
 }
 
 export function getCachedSyncQueue<T>(): T[] | null {
-  return getItem<T[]>(STORAGE_KEYS.SYNC_QUEUE);
+  return getItem<T[]>(STORAGE_KEYS.SYNC_QUEUE, { ttlMs: null });
 }
 
 export function clearSyncQueue(): void {
   if (typeof window === "undefined") return;
+
   try {
     localStorage.removeItem(STORAGE_KEYS.SYNC_QUEUE);
   } catch (error) {
@@ -111,6 +143,7 @@ export function clearSyncQueue(): void {
  */
 export function clearWalletCache(walletAddress: string): void {
   if (typeof window === "undefined") return;
+
   try {
     localStorage.removeItem(STORAGE_KEYS.BALANCES(walletAddress));
     localStorage.removeItem(STORAGE_KEYS.TRANSACTIONS(walletAddress));
