@@ -16,6 +16,8 @@ export interface OfflineSyncManagerOptions<T = Record<string, unknown>> {
   onConflict?: (action: SyncAction<T>, error: Error) => void;
 }
 
+const MAX_SYNC_ATTEMPTS = 3;
+
 export function createOfflineSyncManager<T = Record<string, unknown>>({
   storageKey = "axionvera:sync:queue",
   isOnline,
@@ -66,7 +68,12 @@ export function createOfflineSyncManager<T = Record<string, unknown>>({
 
     isFlushing = true;
     try {
-      const actions = pendingActions.filter((action) => action.status !== "synced" && action.status !== "conflict");
+      const actions = pendingActions.filter((action) => {
+        if (action.status === "synced") return false;
+        if (action.status === "conflict" && action.attempts >= MAX_SYNC_ATTEMPTS) return false;
+        return true;
+      });
+
       if (!actions.length) return;
 
       for (const action of actions) {
@@ -75,7 +82,11 @@ export function createOfflineSyncManager<T = Record<string, unknown>>({
 
         if (pendingActions[index].status === "syncing") continue;
 
-        pendingActions[index] = { ...pendingActions[index], status: "syncing", attempts: pendingActions[index].attempts + 1 };
+        pendingActions[index] = {
+          ...pendingActions[index],
+          status: "syncing",
+          attempts: pendingActions[index].attempts + 1,
+        };
         persist();
 
         try {
@@ -84,8 +95,13 @@ export function createOfflineSyncManager<T = Record<string, unknown>>({
           persist();
         } catch (error) {
           const err = error instanceof Error ? error : new Error("Sync failed");
-          pendingActions[index] = { ...pendingActions[index], status: "conflict" };
+
+          pendingActions[index] = {
+            ...pendingActions[index],
+            status: pendingActions[index].attempts >= MAX_SYNC_ATTEMPTS ? "conflict" : "queued",
+          };
           persist();
+
           onConflict?.(pendingActions[index], err);
         }
       }
